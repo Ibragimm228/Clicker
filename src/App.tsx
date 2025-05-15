@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Coins, Sword, Shield, Crown, Sparkles, Zap, Star, Timer, Award, Rocket, RefreshCw, Volume2, VolumeX, Moon, Sun, Cpu, Maximize, Minimize, AlertTriangle, Target, Dog } from 'lucide-react';
-
+import { Coins, Sword, Shield, Crown, Sparkles, Zap, Star, Timer, Award, Rocket, RefreshCw, Volume2, VolumeX, Moon, Sun, Cpu, Maximize, Minimize, AlertTriangle, Target, Dog, GamepadIcon, Book, Scroll, GraduationCap } from 'lucide-react';
+import MiniGames from './components/MiniGames';
+import QuestSystem from './components/QuestSystem';
+import TalentSystem, { talents as gameTalents } from './components/TalentSystem';
+import ResearchSystem from './components/ResearchSystem';
 
 interface Upgrade {
   id: string;
@@ -58,7 +61,47 @@ interface Pet {
   owned: boolean;
 }
 
+interface TalentEffect {
+  type: keyof typeof initialBonuses;
+  value: number;
+}
+
+interface GameTalent {
+  id: string;
+  effects: TalentEffect[];
+}
+
+const initialBonuses = {
+  clickPower: 1,
+  passiveIncome: 1,
+  criticalChance: 0,
+  criticalMultiplier: 0,
+  petBonus: 0,
+  prestigeBonus: 0
+} as const;
+
+interface Quest {
+  id: string;
+  name: string;
+  description: string;
+  story: string;
+  requirements: {
+    type: 'clicks' | 'score' | 'passive' | 'upgrades';
+    amount: number;
+  }[];
+  rewards: {
+    type: 'coins' | 'research' | 'talent' | 'special';
+    amount: number;
+  }[];
+  completed: boolean;
+  progress: number[];
+  unlocked: boolean;
+  rewardClaimed: boolean;
+}
+
 function App() {
+  const [talentBonuses, setTalentBonuses] = useState(initialBonuses);
+
   const [score, setScore] = useState(() => {
     const saved = localStorage.getItem('gameScore');
     return saved ? parseFloat(saved) : 0;
@@ -333,6 +376,8 @@ function App() {
 
   const [showDailyQuests, setShowDailyQuests] = useState(false);
   const [showPets, setShowPets] = useState(false);
+  const [showMiniGames, setShowMiniGames] = useState(false);
+  const [showResearch, setShowResearch] = useState(false);
 
   const [upgrades, setUpgrades] = useState<Upgrade[]>(() => {
     const saved = localStorage.getItem('gameUpgrades');
@@ -664,24 +709,24 @@ function App() {
 
  
   const handleClick = useCallback((manual = true) => {
-    let clickValue = clickPower * prestigeMultiplier * comboMultiplier;
+    let clickValue = clickPower * prestigeMultiplier * comboMultiplier * talentBonuses.clickPower;
 
     
-    let currentCriticalChance = criticalChance;
-    let currentCriticalMultiplier = criticalMultiplier;
+    let currentCriticalChance = criticalChance + talentBonuses.criticalChance;
+    let currentCriticalMultiplier = criticalMultiplier + talentBonuses.criticalMultiplier;
 
     if (activePet) {
         switch (activePet.bonusType) {
             case 'click':
-                clickValue *= (1 + activePet.bonus);
+                clickValue *= (1 + activePet.bonus * (1 + talentBonuses.petBonus));
                 break;
             case 'passive': 
                 break;
             case 'criticalChance':
-                 currentCriticalChance += (activePet.bonus * 100);
+                 currentCriticalChance += (activePet.bonus * (1 + talentBonuses.petBonus) * 100);
                 break;
             case 'criticalMultiplier':
-                 currentCriticalMultiplier += activePet.bonus;
+                 currentCriticalMultiplier += (activePet.bonus * (1 + talentBonuses.petBonus));
                 break;
              case 'autoClickSpeed':
                 break;
@@ -734,7 +779,7 @@ function App() {
       setTimeout(() => sparkle.remove(), 1000);
     }
 
-  }, [clickPower, prestigeMultiplier, comboMultiplier, activePet, criticalChance, criticalMultiplier, soundEnabled, setDailyQuests, setScore, setTotalEarned, setTotalClicks, handleCombo]); 
+  }, [clickPower, prestigeMultiplier, comboMultiplier, activePet, criticalChance, criticalMultiplier, soundEnabled, setDailyQuests, setScore, setTotalEarned, setTotalClicks, handleCombo, talentBonuses]); 
   useEffect(() => {
     const autoClickBonusSpeed = activePet && activePet.bonusType === 'autoClickSpeed' ? activePet.bonus : 0;
     const currentAutoClickSpeed = autoClickerSpeed + autoClickBonusSpeed;
@@ -925,6 +970,12 @@ function App() {
       return;
     }
 
+    //очко таланта за каждый престиж
+    setTalentPoints(prev => prev + 1);
+    if (soundEnabled) {
+      playSound('achievement');
+    }
+
     setPrestigePoints(prev => prev + newPrestigePoints);
     setPrestigeMultiplier(prev => prev + newPrestigePoints * 0.1);
     setPrestigeCost(prev => Math.floor(prev * 1.5));
@@ -953,14 +1004,12 @@ function App() {
     });
 
     setShowPrestige(false);
-
-    if (soundEnabled) {
-      playSound('event');
-    }
   };
   const calculatePotentialPrestigePoints = () => {
-    const prestigeBonus = (activePet && activePet.bonusType === 'prestigePoints') ? activePet.bonus : 0;
-    return Math.floor(Math.sqrt(totalEarned / 1000) * (1 + prestigeBonus));
+    const prestigeBonus = (activePet && activePet.bonusType === 'prestigePoints') 
+      ? activePet.bonus * (1 + talentBonuses.petBonus) 
+      : 0;
+    return Math.floor(Math.sqrt(totalEarned / 1000) * (1 + prestigeBonus + talentBonuses.prestigeBonus));
   };
   const canPerformPrestige = () => {
     return score >= prestigeCost && calculatePotentialPrestigePoints() >= 1;
@@ -989,6 +1038,149 @@ function App() {
     });
   }, [setScore, soundEnabled]);
 
+  const [showQuests, setShowQuests] = useState(false);
+  const [researchPoints, setResearchPoints] = useState(() => {
+    const saved = localStorage.getItem('gameResearchPoints');
+    return saved ? parseInt(saved) : 0;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('gameResearchPoints', researchPoints.toString());
+  }, [researchPoints]);
+
+  const [showTalents, setShowTalents] = useState(false);
+  const [talentPoints, setTalentPoints] = useState(() => {
+    const saved = localStorage.getItem('gameTalentPoints');
+    return saved ? parseInt(saved) : 0;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('gameTalentPoints', talentPoints.toString());
+  }, [talentPoints]);
+
+  const [quests, setQuests] = useState<Quest[]>(() => {
+    const saved = localStorage.getItem('gameQuests');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return [
+      {
+        id: 'first_probe',
+        name: 'Первый зонд',
+        description: 'Построить первый исследовательский зонд',
+        story: 'Для исследования далеких галактик нам необходимо построить исследовательский зонд. Это будет первый шаг к покорению космоса!',
+        requirements: [
+          { type: 'clicks', amount: 100 },
+          { type: 'score', amount: 500 }
+        ],
+        rewards: [
+          { type: 'coins', amount: 1000 },
+          { type: 'research', amount: 50 },
+          { type: 'talent', amount: 1 }
+        ],
+        completed: false,
+        progress: [0, 0],
+        unlocked: true,
+        rewardClaimed: false
+      },
+      {
+        id: 'defend_station',
+        name: 'Защита станции',
+        description: 'Отбить атаку космических рейдеров',
+        story: 'Наши сенсоры засекли приближение вражеских кораблей! Нужно срочно усилить оборону станции и подготовиться к отражению атаки.',
+        requirements: [
+          { type: 'clicks', amount: 500 },
+          { type: 'upgrades', amount: 3 }
+        ],
+        rewards: [
+          { type: 'coins', amount: 2000 },
+          { type: 'special', amount: 1 },
+          { type: 'talent', amount: 2 }
+        ],
+        completed: false,
+        progress: [0, 0],
+        unlocked: false,
+        rewardClaimed: false
+      },
+      {
+        id: 'ancient_artifact',
+        name: 'Древний артефакт',
+        description: 'Расшифровать древний артефакт',
+        story: 'Исследовательский зонд обнаружил странный объект с древними письменами. Для его изучения потребуются значительные ресурсы.',
+        requirements: [
+          { type: 'score', amount: 5000 },
+          { type: 'passive', amount: 10 }
+        ],
+        rewards: [
+          { type: 'coins', amount: 5000 },
+          { type: 'research', amount: 200 },
+          { type: 'talent', amount: 3 }
+        ],
+        completed: false,
+        progress: [0, 0],
+        unlocked: false,
+        rewardClaimed: false
+      }
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('gameQuests', JSON.stringify(quests));
+  }, [quests]);
+  useEffect(() => {
+    const checkQuestProgress = () => {
+      setQuests(prevQuests => {
+        let questsChanged = false;
+        const updatedQuests = prevQuests.map(quest => {
+          if (quest.completed) return quest;
+
+          const newProgress = quest.requirements.map((req) => {
+            switch (req.type) {
+              case 'clicks':
+                return Math.min(totalClicks, req.amount);
+              case 'score':
+                return Math.min(score, req.amount);
+              case 'passive':
+                return Math.min(passiveIncome, req.amount);
+              case 'upgrades':
+                return Math.min(upgrades.reduce((sum, u) => sum + u.owned, 0), req.amount);
+              default:
+                return 0;
+            }
+          });
+
+          const progressChanged = newProgress.some((p, i) => p !== quest.progress[i]);
+          if (progressChanged) {
+            questsChanged = true;
+          }
+
+          const completed = newProgress.every((p, i) => p >= quest.requirements[i].amount);
+          if (completed && !quest.completed) {
+            questsChanged = true;
+          }
+
+          return {
+            ...quest,
+            progress: newProgress,
+            completed
+          };
+        });
+        const finalQuests = updatedQuests.map((quest, index) => {
+          if (index === 0) return quest;
+          const previousQuest = updatedQuests[index - 1];
+          return {
+            ...quest,
+            unlocked: previousQuest.completed || quest.unlocked
+          };
+        });
+
+        return questsChanged ? finalQuests : prevQuests;
+      });
+    };
+
+    checkQuestProgress();
+  }, [totalClicks, score, passiveIncome, upgrades]);
+
   return (
     <div className={`min-h-screen ${darkMode ? 'bg-gradient-to-br from-purple-900 via-violet-800 to-indigo-900 text-white' : 'bg-gradient-to-br from-blue-100 via-indigo-100 to-purple-200 text-gray-800'}`}>
       <div className="container mx-auto px-4 py-4 sm:py-8 min-h-screen flex flex-col">
@@ -997,7 +1189,7 @@ function App() {
             <Sparkles className={`w-8 h-8 sm:w-10 sm:h-10 ${darkMode ? 'text-purple-300' : 'text-purple-500'}`} />
             Космический Кликер
           </h1>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 max-w-2xl mx-auto mb-4 sm:mb-8">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 max-w-2xl mx-auto mb-4 sm:mb-8">
             <div className={`${darkMode ? 'bg-purple-800/30' : 'bg-white/50'} backdrop-blur-sm rounded-lg p-2 sm:p-4 flex flex-col items-center`}>
               <Coins className={`w-5 h-5 sm:w-6 sm:h-6 mb-1 sm:mb-2 ${darkMode ? 'text-yellow-400' : 'text-yellow-500'}`} />
               <div className="text-lg sm:text-xl font-bold">{Math.floor(score)}</div>
@@ -1021,6 +1213,12 @@ function App() {
               <div className="text-lg sm:text-xl font-bold">{prestigePoints}</div>
               <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-300' : 'text-purple-600'}`}>Очки престижа</div>
             </div>
+
+            <div className={`${darkMode ? 'bg-purple-800/30' : 'bg-white/50'} backdrop-blur-sm rounded-lg p-2 sm:p-4 flex flex-col items-center`}>
+              <Scroll className={`w-5 h-5 sm:w-6 sm:h-6 mb-1 sm:mb-2 ${darkMode ? 'text-blue-400' : 'text-blue-500'}`} />
+              <div className="text-lg sm:text-xl font-bold">{researchPoints}</div>
+              <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-300' : 'text-purple-600'}`}>Очки исследования</div>
+            </div>
           </div>
           {comboMultiplier > 1 && (
             <div className={`fixed top-4 right-4 ${darkMode ? 'bg-purple-700' : 'bg-purple-200'} p-2 rounded-lg animate-pulse`}>
@@ -1028,41 +1226,66 @@ function App() {
               <div className="text-sm">Осталось {comboTimer}с</div>
             </div>
           )}
-          <div className="flex justify-center gap-3 mb-4">
-            <div className="flex gap-3">
+          {/* Кнопки управления */}
+          <div className="flex justify-center items-center gap-4 mb-4">
+            {/* Основные кнопки слева */}
+            <div className="flex gap-4">
               <button
                 onClick={() => setShowAchievements(true)}
-                className={buttonBaseClass}
-                title="Достижения"
+                className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-indigo-100 hover:bg-indigo-200'} transition-colors flex flex-col items-center gap-1 w-[80px] h-[80px] justify-center`}
               >
-                <Award className={iconClass} />
+                <Award className="w-7 h-7" />
                 <span className="text-xs">Достижения</span>
               </button>
+
               <button
                 onClick={() => setShowPrestige(true)}
-                className={buttonBaseClass}
-                title="Престиж"
+                className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-indigo-100 hover:bg-indigo-200'} transition-colors flex flex-col items-center gap-1 w-[80px] h-[80px] justify-center`}
               >
-                <RefreshCw className={iconClass} />
+                <RefreshCw className="w-7 h-7" />
                 <span className="text-xs">Престиж</span>
               </button>
+
+              <button
+                onClick={toggleFullscreen}
+                className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-indigo-100 hover:bg-indigo-200'} transition-colors flex flex-col items-center gap-1 w-[80px] h-[80px] justify-center`}
+              >
+                {fullscreen ? <Minimize className="w-7 h-7" /> : <Maximize className="w-7 h-7" />}
+                <span className="text-xs">Экран</span>
+              </button>
             </div>
+            {/* Разделитель */}
+            <div className={`h-[80px] w-px ${darkMode ? 'bg-purple-600' : 'bg-indigo-200'}`}></div>
+            {/* Кнопка настроек с выпадающим меню */}
             <div className="relative group">
               <button
-                className={buttonBaseClass}
-                title="Дополнительно"
+                className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-indigo-100 hover:bg-indigo-200'} transition-colors flex flex-col items-center gap-1 w-[80px] h-[80px] justify-center`}
               >
-                <Sparkles className={iconClass} />
-                <span className="text-xs">Функции</span>
+                <Cpu className="w-7 h-7" />
+                <span className="text-xs">Настройки</span>
               </button>
 
               <div className={`absolute top-full right-0 mt-2 ${darkMode ? 'bg-purple-800' : 'bg-white'} rounded-lg shadow-xl p-2 min-w-[200px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50`}>
                 <button
-                  onClick={() => setShowDailyQuests(true)}
+                  onClick={() => setShowMiniGames(true)}
                   className={`w-full p-2 rounded-lg mb-1 flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
                 >
-                  <Target className="w-6 h-6" />
+                  <GamepadIcon className="w-6 h-6" />
+                  <span>Мини-игры</span>
+                </button>
+                <button
+                  onClick={() => setShowQuests(true)}
+                  className={`w-full p-2 rounded-lg mb-1 flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
+                >
+                  <Book className="w-6 h-6" />
                   <span>Задания</span>
+                </button>
+                <button
+                  onClick={() => setShowResearch(true)}
+                  className={`w-full p-2 rounded-lg mb-1 flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
+                >
+                  <Scroll className="w-6 h-6" />
+                  <span>Исследования</span>
                 </button>
                 <button
                   onClick={() => setShowPets(true)}
@@ -1071,409 +1294,531 @@ function App() {
                   <Dog className="w-6 h-6" />
                   <span>Питомцы</span>
                 </button>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setSoundEnabled(!soundEnabled)}
-                className={buttonBaseClass}
-                title={soundEnabled ? "Выключить звук" : "Включить звук"}
-              >
-                {soundEnabled ? <Volume2 className={iconClass} /> : <VolumeX className={iconClass} />}
-                <span className="text-xs">Звук</span>
-              </button>
-              <button
-                onClick={() => setDarkMode(!darkMode)}
-                className={buttonBaseClass}
-                title={darkMode ? "Светлая тема" : "Тёмная тема"}
-              >
-                {darkMode ? <Sun className={iconClass} /> : <Moon className={iconClass} />}
-                <span className="text-xs">Тема</span>
-              </button>
-              <button
-                onClick={toggleFullscreen}
-                className={buttonBaseClass}
-                title={fullscreen ? "Выйти из полноэкранного режима" : "Полноэкранный режим"}
-              >
-                {fullscreen ? <Minimize className={iconClass} /> : <Maximize className={iconClass} />}
-                <span className="text-xs">Экран</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-8 max-w-4xl mx-auto w-full">
-          <div className="flex-1 flex items-center justify-center">
-            <button
-              id="click-button"
-              onClick={() => handleClick()}
-              className={`w-full max-w-[300px] lg:max-w-none aspect-square rounded-2xl ${
-                darkMode
-                  ? 'bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
-                  : 'bg-gradient-to-br from-indigo-400 to-purple-500 hover:from-indigo-500 hover:to-purple-600'
-              } transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center relative overflow-hidden group`}
-            >
-              <div className={`absolute inset-0 ${darkMode ? 'bg-gradient-to-br from-purple-400/20 to-transparent' : 'bg-gradient-to-br from-indigo-300/20 to-transparent'} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
-              <div className="text-center relative z-10">
-                <Sparkles className={`w-16 h-16 sm:w-20 sm:h-20 mb-2 mx-auto animate-pulse ${criticalClick ? 'text-yellow-300 scale-150' : darkMode ? 'text-purple-200' : 'text-purple-100'} transition-all duration-300`} />
-                <span className={`text-xl sm:text-2xl font-bold ${darkMode ? 'text-purple-100' : 'text-white'}`}>КЛИК!</span>
-              </div>
-            </button>
-          </div>
-          <div className="flex-1">
-            <div className={`${darkMode ? 'bg-purple-800/20' : 'bg-white/30'} backdrop-blur-lg rounded-lg p-4 sm:p-6 shadow-xl h-full`}>
-              <h2 className={`text-xl sm:text-2xl font-bold mb-3 sm:mb-4 ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>Улучшения</h2>
-              <div className="flex mb-3 space-x-2 text-sm">
                 <button
-                  onClick={() => setActiveTab('all')}
-                  className={`px-3 py-1 rounded-full transition-colors ${
-                    activeTab === 'all'
-                      ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
-                      : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
-                  }`}
+                  onClick={() => setShowTalents(true)}
+                  className={`w-full p-2 rounded-lg mb-1 flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
                 >
-                  Все
+                  <GraduationCap className="w-6 h-6" />
+                  <span>Таланты</span>
+                </button>
+                <div className="border-t border-gray-700 my-1"></div>
+                <button
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`w-full p-2 rounded-lg mb-1 flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
+                >
+                  {soundEnabled ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+                  <span>Звук {soundEnabled ? 'Вкл' : 'Выкл'}</span>
                 </button>
                 <button
-                  onClick={() => setActiveTab('click')}
-                  className={`px-3 py-1 rounded-full transition-colors ${
-                    activeTab === 'click'
-                      ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
-                      : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
-                  }`}
+                  onClick={() => setDarkMode(!darkMode)}
+                  className={`w-full p-2 rounded-lg flex items-center gap-3 ${darkMode ? 'hover:bg-purple-700' : 'hover:bg-indigo-100'} transition-colors`}
                 >
-                  Клик
+                  {darkMode ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
+                  <span>{darkMode ? 'Светлая тема' : 'Тёмная тема'}</span>
                 </button>
-                <button
-                  onClick={() => setActiveTab('passive')}
-                  className={`px-3 py-1 rounded-full transition-colors ${
-                    activeTab === 'passive'
-                      ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
-                      : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
-                  }`}
-                >
-                  Пассив
-                </button>
-                <button
-                  onClick={() => setActiveTab('special')}
-                  className={`px-3 py-1 rounded-full transition-colors ${
-                    activeTab === 'special'
-                      ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
-                      : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
-                  }`}
-                >
-                  Особые
-                </button>
-              </div>
-              <div className="space-y-2 sm:space-y-3 overflow-y-auto max-h-[300px] lg:max-h-[400px] pr-2">
-                {filteredUpgrades.length > 0 ? (
-                  filteredUpgrades.map((upgrade) => (
-                    <button
-                      key={upgrade.id}
-                      onClick={() => purchaseUpgrade(upgrade.id)}
-                      disabled={score < upgrade.cost || (upgrade.maxOwned !== undefined && upgrade.owned >= upgrade.maxOwned)}
-                      className={`w-full p-3 sm:p-4 rounded-lg flex items-center justify-between ${
-                        score >= upgrade.cost && (!upgrade.maxOwned || upgrade.owned < upgrade.maxOwned)
-                          ? (darkMode ? 'bg-purple-700/50 hover:bg-purple-600/50' : 'bg-purple-200/70 hover:bg-purple-300/70')
-                          : (darkMode ? 'bg-gray-800/50 cursor-not-allowed opacity-50' : 'bg-gray-200/50 cursor-not-allowed opacity-50')
-                      } transition-all duration-200 group`}
-                    >
-                      <div className="flex items-center gap-2 sm:gap-3">
-                        <div className={`p-1.5 sm:p-2 ${darkMode ? 'bg-purple-800/50 group-hover:bg-purple-700/50' : 'bg-purple-300/50 group-hover:bg-purple-400/50'} rounded-lg transition-colors`}>
-                          {upgrade.icon}
-                        </div>
-                        <div className="text-left">
-                          <div className="font-semibold text-sm sm:text-base">{upgrade.name}</div>
-                          <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                            {upgrade.description}
-                          </div>
-                          <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}>
-                            Куплено: {upgrade.owned}{upgrade.maxOwned ? `/${upgrade.maxOwned}` : ''}
-                          </div>
-                        </div>
-                      </div>
-                      <div className={`flex items-center gap-1 ${darkMode ? 'bg-purple-900/50' : 'bg-purple-100/70'} px-2 sm:px-3 py-1 rounded-full text-sm sm:text-base`}>
-                        <Coins className={`w-3 h-3 sm:w-4 sm:h-4 ${darkMode ? 'text-yellow-400' : 'text-yellow-500'}`} />
-                        {upgrade.cost}
-                      </div>
-                    </button>
-                  ))
-                ) : (
-                  <div className={`text-center p-4 ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                    Нет доступных улучшений в этой категории
-                  </div>
-                )}
               </div>
             </div>
           </div>
-        </div>
-        {activeEvent && (
-          <div className={`fixed bottom-4 left-4 right-4 ${darkMode ? 'bg-purple-700' : 'bg-indigo-100'} p-3 rounded-lg shadow-lg max-w-md mx-auto flex items-center gap-3 animate-pulse`}>
-            <div className={`p-2 rounded-full ${darkMode ? 'bg-purple-600' : 'bg-indigo-200'}`}>
-              {activeEvent.icon}
-            </div>
-            <div className="flex-1">
-              <div className="font-bold">{activeEvent.name}</div>
-              <div className={`text-sm ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>{activeEvent.description}</div>
-            </div>
-            <div className={`text-lg font-bold ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>{eventTimeLeft}с</div>
-          </div>
-        )}
-        {newAchievement && (
-          <div className={`fixed top-4 left-4 right-4 ${darkMode ? 'bg-yellow-600' : 'bg-yellow-100'} p-3 rounded-lg shadow-lg max-w-md mx-auto flex items-center gap-3 animate-bounce`}>
-            <div className={`p-2 rounded-full ${darkMode ? 'bg-yellow-500' : 'bg-yellow-200'}`}>
-              {newAchievement.icon}
-            </div>
-            <div className="flex-1">
-              <div className="font-bold">Новое достижение!</div>
-              <div className={`text-sm ${darkMode ? 'text-yellow-200' : 'text-yellow-700'}`}>{newAchievement.name}</div>
-            </div>
-          </div>
-        )}
-        {showAchievements && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col`}>
-              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Award className="w-6 h-6" /> Достижения ({achievements.filter(a => a.unlocked).length}/{achievements.length})
-                </h2>
-                <button onClick={() => setShowAchievements(false)} className="text-2xl">&times;</button>
-              </div>
 
-              <div className="p-4 overflow-y-auto flex-1">
-                <div className="mb-4 w-full bg-gray-700 h-2 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-yellow-400"
-                    style={{ width: `${achievementPercentage}%` }}
-                  ></div>
+          <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-8 max-w-4xl mx-auto w-full">
+            <div className="flex-1 flex items-center justify-center">
+              <button
+                id="click-button"
+                onClick={() => handleClick()}
+                className={`w-full max-w-[300px] lg:max-w-none aspect-square rounded-2xl ${
+                  darkMode
+                    ? 'bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700'
+                    : 'bg-gradient-to-br from-indigo-400 to-purple-500 hover:from-indigo-500 hover:to-purple-600'
+                } transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-xl flex items-center justify-center relative overflow-hidden group`}
+              >
+                <div className={`absolute inset-0 ${darkMode ? 'bg-gradient-to-br from-purple-400/20 to-transparent' : 'bg-gradient-to-br from-indigo-300/20 to-transparent'} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
+                <div className="text-center relative z-10">
+                  <Sparkles className={`w-16 h-16 sm:w-20 sm:h-20 mb-2 mx-auto animate-pulse ${criticalClick ? 'text-yellow-300 scale-150' : darkMode ? 'text-purple-200' : 'text-purple-100'} transition-all duration-300`} />
+                  <span className={`text-xl sm:text-2xl font-bold ${darkMode ? 'text-purple-100' : 'text-white'}`}>КЛИК!</span>
+                </div>
+              </button>
+            </div>
+            <div className="flex-1">
+              <div className={`${darkMode ? 'bg-purple-800/20' : 'bg-white/30'} backdrop-blur-lg rounded-lg p-4 sm:p-6 shadow-xl h-full`}>
+                <h2 className={`text-xl sm:text-2xl font-bold mb-3 sm:mb-4 ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>Улучшения</h2>
+                <div className="flex mb-3 space-x-2 text-sm">
+                  <button
+                    onClick={() => setActiveTab('all')}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      activeTab === 'all'
+                        ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
+                        : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
+                    }`}
+                  >
+                    Все
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('click')}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      activeTab === 'click'
+                        ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
+                        : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
+                    }`}
+                  >
+                    Клик
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('passive')}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      activeTab === 'passive'
+                        ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
+                        : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
+                    }`}
+                  >
+                    Пассив
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('special')}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      activeTab === 'special'
+                        ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white')
+                        : (darkMode ? 'bg-purple-800/50 text-purple-300 hover:bg-purple-700/50' : 'bg-purple-100 text-purple-700 hover:bg-purple-200')
+                    }`}
+                  >
+                    Особые
+                  </button>
+                </div>
+                <div className="space-y-2 sm:space-y-3 overflow-y-auto max-h-[300px] lg:max-h-[400px] pr-2">
+                  {filteredUpgrades.length > 0 ? (
+                    filteredUpgrades.map((upgrade) => (
+                      <button
+                        key={upgrade.id}
+                        onClick={() => purchaseUpgrade(upgrade.id)}
+                        disabled={score < upgrade.cost || (upgrade.maxOwned !== undefined && upgrade.owned >= upgrade.maxOwned)}
+                        className={`w-full p-3 sm:p-4 rounded-lg flex items-center justify-between ${
+                          score >= upgrade.cost && (!upgrade.maxOwned || upgrade.owned < upgrade.maxOwned)
+                            ? (darkMode ? 'bg-purple-700/50 hover:bg-purple-600/50' : 'bg-purple-200/70 hover:bg-purple-300/70')
+                            : (darkMode ? 'bg-gray-800/50 cursor-not-allowed opacity-50' : 'bg-gray-200/50 cursor-not-allowed opacity-50')
+                        } transition-all duration-200 group`}
+                      >
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <div className={`p-1.5 sm:p-2 ${darkMode ? 'bg-purple-800/50 group-hover:bg-purple-700/50' : 'bg-purple-300/50 group-hover:bg-purple-400/50'} rounded-lg transition-colors`}>
+                            {upgrade.icon}
+                          </div>
+                          <div className="text-left">
+                            <div className="font-semibold text-sm sm:text-base">{upgrade.name}</div>
+                            <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                              {upgrade.description}
+                            </div>
+                            <div className={`text-[10px] sm:text-xs ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}>
+                              Куплено: {upgrade.owned}{upgrade.maxOwned ? `/${upgrade.maxOwned}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                        <div className={`flex items-center gap-1 ${darkMode ? 'bg-purple-900/50' : 'bg-purple-100/70'} px-2 sm:px-3 py-1 rounded-full text-sm sm:text-base`}>
+                          <Coins className={`w-3 h-3 sm:w-4 sm:h-4 ${darkMode ? 'text-yellow-400' : 'text-yellow-500'}`} />
+                          {upgrade.cost}
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={`text-center p-4 ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                      Нет доступных улучшений в этой категории
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          {activeEvent && (
+            <div className={`fixed bottom-4 left-4 right-4 ${darkMode ? 'bg-purple-700' : 'bg-indigo-100'} p-3 rounded-lg shadow-lg max-w-md mx-auto flex items-center gap-3 animate-pulse`}>
+              <div className={`p-2 rounded-full ${darkMode ? 'bg-purple-600' : 'bg-indigo-200'}`}>
+                {activeEvent.icon}
+              </div>
+              <div className="flex-1">
+                <div className="font-bold">{activeEvent.name}</div>
+                <div className={`text-sm ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>{activeEvent.description}</div>
+              </div>
+              <div className={`text-lg font-bold ${darkMode ? 'text-purple-200' : 'text-purple-700'}`}>{eventTimeLeft}с</div>
+            </div>
+          )}
+          {newAchievement && (
+            <div className={`fixed top-4 left-4 right-4 ${darkMode ? 'bg-yellow-600' : 'bg-yellow-100'} p-3 rounded-lg shadow-lg max-w-md mx-auto flex items-center gap-3 animate-bounce`}>
+              <div className={`p-2 rounded-full ${darkMode ? 'bg-yellow-500' : 'bg-yellow-200'}`}>
+                {newAchievement.icon}
+              </div>
+              <div className="flex-1">
+                <div className="font-bold">Новое достижение!</div>
+                <div className={`text-sm ${darkMode ? 'text-yellow-200' : 'text-yellow-700'}`}>{newAchievement.name}</div>
+              </div>
+            </div>
+          )}
+          {showAchievements && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col`}>
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Award className="w-6 h-6" /> Достижения ({achievements.filter(a => a.unlocked).length}/{achievements.length})
+                  </h2>
+                  <button onClick={() => setShowAchievements(false)} className="text-2xl">&times;</button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {achievements.map(achievement => (
+                <div className="p-4 overflow-y-auto flex-1">
+                  <div className="mb-4 w-full bg-gray-700 h-2 rounded-full overflow-hidden">
                     <div
-                      key={achievement.id}
-                      className={`p-3 rounded-lg ${
-                        achievement.unlocked
-                          ? (darkMode ? 'bg-purple-700' : 'bg-purple-100')
-                          : (darkMode ? 'bg-gray-800 opacity-70' : 'bg-gray-200 opacity-70')
-                      } flex items-center gap-3`}
-                    >
-                      <div className={`p-2 rounded-full ${
-                        achievement.unlocked
-                          ? (darkMode ? 'bg-purple-600 text-yellow-300' : 'bg-purple-200 text-yellow-600')
-                          : (darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-300 text-gray-500')
-                      }`}>
-                        {achievement.icon}
+                      className="h-full bg-yellow-400"
+                      style={{ width: `${achievementPercentage}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {achievements.map(achievement => (
+                      <div
+                        key={achievement.id}
+                        className={`p-3 rounded-lg ${
+                          achievement.unlocked
+                            ? (darkMode ? 'bg-purple-700' : 'bg-purple-100')
+                            : (darkMode ? 'bg-gray-800 opacity-70' : 'bg-gray-200 opacity-70')
+                        } flex items-center gap-3`}
+                      >
+                        <div className={`p-2 rounded-full ${
+                          achievement.unlocked
+                            ? (darkMode ? 'bg-purple-600 text-yellow-300' : 'bg-purple-200 text-yellow-600')
+                            : (darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-300 text-gray-500')
+                        }`}>
+                          {achievement.icon}
+                        </div>
+                        <div>
+                          <div className="font-bold">{achievement.name}</div>
+                          <div className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>{achievement.description}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-bold">{achievement.name}</div>
-                        <div className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>{achievement.description}</div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-gray-700">
+                  <button
+                    onClick={() => setShowAchievements(false)}
+                    className={`w-full py-2 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-purple-500 hover:bg-purple-400'} text-white transition-colors`}
+                  >
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {showPrestige && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden flex flex-col`}>
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <RefreshCw className="w-6 h-6" /> Система престижа
+                  </h2>
+                  <button onClick={() => setShowPrestige(false)} className="text-2xl">&times;</button>
+                </div>
+
+                <div className="p-4">
+                  <p className="mb-4">Престиж позволяет сбросить прогресс, но получить постоянный множитель ко всем доходам.</p>
+
+                  <div className={`p-4 rounded-lg ${darkMode ? 'bg-purple-800' : 'bg-purple-100'} mb-4`}>
+                    <div className="flex justify-between items-center mb-2">
+                      <span>Текущий множитель:</span>
+                      <span className="font-bold">x{prestigeMultiplier.toFixed(1)}</span>
+                    </div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span>Очки престижа:</span>
+                      <span className="font-bold">{prestigePoints}</span>
+                    </div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span>Стоимость престижа:</span>
+                      <span className="font-bold">{prestigeCost} монет</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>Потенциальные очки:</span>
+                      <span className="font-bold">{calculatePotentialPrestigePoints()}</span>
+                    </div>
+                  </div>
+
+                  <div className="mb-4">
+                    <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                      При престиже вы получите:
+                    </p>
+                    <ul className="list-disc pl-5 mt-2 space-y-1">
+                      <li className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                        <strong>{calculatePotentialPrestigePoints()}</strong> очков престижа
+                      </li>
+                      <li className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                        <strong>+{(calculatePotentialPrestigePoints() * 0.1).toFixed(1)}x</strong> к множителю
+                      </li>
+                      <li className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                        <strong>1</strong> очко таланта
+                      </li>
+                    </ul>
+                    <p className={`text-sm mt-4 ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                      Для престижа требуется <strong>{prestigeCost}</strong> монет. После престижа весь прогресс будет сброшен, но множитель и очки таланта сохранятся навсегда!
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setShowPrestige(false)}
+                      className={`flex-1 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-300 hover:bg-gray-200'} transition-colors`}
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      onClick={performPrestige}
+                      disabled={!canPerformPrestige()}
+                      className={`flex-1 py-2 rounded-lg ${
+                        canPerformPrestige()
+                          ? (darkMode ? 'bg-purple-600 hover:bg-purple-500' : 'bg-purple-500 hover:bg-purple-400')
+                          : (darkMode ? 'bg-gray-700 cursor-not-allowed opacity-50' : 'bg-gray-300 cursor-not-allowed opacity-50')
+                      } text-white transition-colors`}
+                    >
+                      Престиж
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {showDailyQuests && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden`}>
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Target className="w-6 h-6" /> Ежедневные задания
+                  </h2>
+                  <button onClick={() => setShowDailyQuests(false)} className="text-2xl">&times;</button>
+                </div>
+
+                <div className="p-4 space-y-4">
+                  {dailyQuests.map(quest => (
+                    <div
+                      key={quest.id}
+                      className={`${darkMode ? 'bg-purple-800' : 'bg-purple-100'} p-4 rounded-lg`}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <h3 className="font-bold">{quest.name}</h3>
+                          <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                            {quest.description}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Coins className={`w-4 h-4 ${darkMode ? 'text-yellow-400' : 'text-yellow-500'}`} />
+                          <span>{quest.reward}</span>
+                        </div>
+                      </div>
+                      <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${quest.completed ? 'bg-green-400' : 'bg-blue-400'}`}
+                          style={{ width: `${(quest.progress / quest.target) * 100}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between items-center mt-2">
+                        <div className="text-sm">
+                          {quest.progress}/{quest.target}
+                        </div>
+                        {quest.completed && !quest.rewardClaimed && (
+                          <button
+                            onClick={() => claimQuestReward(quest.id)}
+                            className={`px-3 py-1 rounded-full text-sm ${
+                              darkMode ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-green-500 hover:bg-green-400 text-white'
+                            } transition-colors`}
+                          >
+                            Забрать награду
+                          </button>
+                        )}
+                        {quest.rewardClaimed && (
+                          <span className={`text-sm ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
+                            Награда получена
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-
-              <div className="p-4 border-t border-gray-700">
-                <button
-                  onClick={() => setShowAchievements(false)}
-                  className={`w-full py-2 rounded-lg ${darkMode ? 'bg-purple-700 hover:bg-purple-600' : 'bg-purple-500 hover:bg-purple-400'} text-white transition-colors`}
-                >
-                  Закрыть
-                </button>
-              </div>
             </div>
-          </div>
-        )}
-        {showPrestige && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden flex flex-col`}>
-              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <RefreshCw className="w-6 h-6" /> Система престижа
-                </h2>
-                <button onClick={() => setShowPrestige(false)} className="text-2xl">&times;</button>
-              </div>
-
-              <div className="p-4">
-                <p className="mb-4">Престиж позволяет сбросить прогресс, но получить постоянный множитель ко всем доходам.</p>
-
-                <div className={`p-4 rounded-lg ${darkMode ? 'bg-purple-800' : 'bg-purple-100'} mb-4`}>
-                  <div className="flex justify-between items-center mb-2">
-                    <span>Текущий множитель:</span>
-                    <span className="font-bold">x{prestigeMultiplier.toFixed(1)}</span>
-                  </div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span>Очки престижа:</span>
-                    <span className="font-bold">{prestigePoints}</span>
-                  </div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span>Стоимость престижа:</span>
-                    <span className="font-bold">{prestigeCost} монет</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Потенциальные очки:</span>
-                    <span className="font-bold">{calculatePotentialPrestigePoints()}</span>
-                  </div>
+          )}
+          {showPets && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden`}>
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Dog className="w-6 h-6" /> Питомцы
+                  </h2>
+                  <button onClick={() => setShowPets(false)} className="text-2xl">&times;</button>
                 </div>
 
-                <div className="mb-4">
-                  <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                    При престиже вы получите <strong>{calculatePotentialPrestigePoints()}</strong> очков престижа и увеличите множитель на <strong>+{(calculatePotentialPrestigePoints() * 0.1).toFixed(1)}x</strong>.
-                  </p>
-                  <p className={`text-sm mt-2 ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                    Для престижа требуется <strong>{prestigeCost}</strong> монет. После престижа весь прогресс будет сброшен, но множитель сохранится навсегда!
-                  </p>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowPrestige(false)}
-                    className={`flex-1 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-300 hover:bg-gray-200'} transition-colors`}
-                  >
-                    Отмена
-                  </button>
-                  <button
-                    onClick={performPrestige}
-                    disabled={!canPerformPrestige()}
-                    className={`flex-1 py-2 rounded-lg ${
-                      canPerformPrestige()
-                        ? (darkMode ? 'bg-purple-600 hover:bg-purple-500' : 'bg-purple-500 hover:bg-purple-400')
-                        : (darkMode ? 'bg-gray-700 cursor-not-allowed opacity-50' : 'bg-gray-300 cursor-not-allowed opacity-50')
-                    } text-white transition-colors`}
-                  >
-                    Престиж
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        {showDailyQuests && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden`}>
-              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Target className="w-6 h-6" /> Ежедневные задания
-                </h2>
-                <button onClick={() => setShowDailyQuests(false)} className="text-2xl">&times;</button>
-              </div>
-
-              <div className="p-4 space-y-4">
-                {dailyQuests.map(quest => (
-                  <div
-                    key={quest.id}
-                    className={`${darkMode ? 'bg-purple-800' : 'bg-purple-100'} p-4 rounded-lg`}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h3 className="font-bold">{quest.name}</h3>
+                <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
+                  {pets.map(pet => (
+                    <div
+                      key={pet.id}
+                      className={`${darkMode ? 'bg-purple-800' : 'bg-purple-100'} p-4 rounded-lg flex items-center gap-4`}
+                    >
+                      <div className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700' : 'bg-purple-200'}`}>
+                        {pet.icon}
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-bold">{pet.name}</h3>
                         <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                          {quest.description}
+                          {pet.ability}
                         </p>
+                        <div className="text-sm">
+                           Бонус: {pet.bonusType === 'criticalChance' ? `+${(pet.bonus * 100).toFixed(0)}% к шансу` :
+                                   pet.bonusType === 'criticalMultiplier' ? `+${pet.bonus.toFixed(1)}x к множителю` :
+                                   pet.bonusType === 'autoClickSpeed' ? `+${pet.bonus} к скорости автокликера` :
+                                   pet.bonusType === 'prestigePoints' ? `+${(pet.bonus * 100).toFixed(0)}% к престижу` :
+                                   `+${(pet.bonus * 100).toFixed(0)}% к ${pet.bonusType === 'click' ? 'клику' : 'пассивному доходу'}`}
+                        </div>
+                        <div className="text-sm">Уровень: {pet.level}</div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Coins className={`w-4 h-4 ${darkMode ? 'text-yellow-400' : 'text-yellow-500'}`} />
-                        <span>{quest.reward}</span>
+                      <div>
+                        {pet.owned ? (
+                           <button
+                            onClick={() => setActivePet(pet)}
+                            className={`px-3 py-1 rounded-full text-sm ${
+                              activePet?.id === pet.id
+                                ? (darkMode ? 'bg-green-600 text-white' : 'bg-green-500 text-white')
+                                : (darkMode ? 'bg-purple-700 text-purple-200 hover:bg-purple-600' : 'bg-purple-200 text-purple-800 hover:bg-purple-300')
+                            } transition-colors`}
+                            disabled={activePet?.id === pet.id}
+                          >
+                            {activePet?.id === pet.id ? 'Активен' : 'Выбрать'}
+                          </button>
+                        ) : (
+                           <button
+                             onClick={() => purchasePet(pet.id)}
+                             disabled={score < pet.cost}
+                             className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 ${
+                               score >= pet.cost
+                                 ? (darkMode ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-yellow-400 hover:bg-yellow-500 text-white')
+                                 : (darkMode ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
+                             } transition-colors`}
+                           >
+                             <Coins className="w-4 h-4" /> {pet.cost}
+                           </button>
+                        )}
                       </div>
                     </div>
-                    <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${quest.completed ? 'bg-green-400' : 'bg-blue-400'}`}
-                        style={{ width: `${(quest.progress / quest.target) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between items-center mt-2">
-                      <div className="text-sm">
-                        {quest.progress}/{quest.target}
-                      </div>
-                      {quest.completed && !quest.rewardClaimed && (
-                        <button
-                          onClick={() => claimQuestReward(quest.id)}
-                          className={`px-3 py-1 rounded-full text-sm ${
-                            darkMode ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-green-500 hover:bg-green-400 text-white'
-                          } transition-colors`}
-                        >
-                          Забрать награду
-                        </button>
-                      )}
-                      {quest.rewardClaimed && (
-                        <span className={`text-sm ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
-                          Награда получена
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        {showPets && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className={`${darkMode ? 'bg-purple-900' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full overflow-hidden`}>
-              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Dog className="w-6 h-6" /> Питомцы
-                </h2>
-                <button onClick={() => setShowPets(false)} className="text-2xl">&times;</button>
-              </div>
+          )}
+          {showMiniGames && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <MiniGames
+                onReward={(amount) => {
+                  setScore(prev => prev + amount);
+                  setTotalEarned(prev => prev + amount); 
+                  if (amount >= 1000) {
+                    const chance = Math.random();
+                    if (chance < 0.2) {
+                      setTalentPoints(prev => prev + 1);
+                      if (soundEnabled) {
+                        playSound('achievement');
+                      }
+                    }
+                  }
+                }}
+                darkMode={darkMode}
+                soundEnabled={soundEnabled}
+                onClose={() => setShowMiniGames(false)}
+              />
+            </div>
+          )}
+          {showQuests && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <QuestSystem
+                onReward={(amount) => {
+                  setScore(prev => prev + amount);
+                  setTotalEarned(prev => prev + amount);
+                  if (soundEnabled) {
+                    playSound('achievement');
+                  }
+                }}
+                onResourceGain={(type, amount) => {
+                  if (type === 'research') {
+                    setResearchPoints(prev => prev + amount);
+                  } else if (type === 'talent') {
+                    setTalentPoints(prev => prev + amount);
+                    if (soundEnabled) {
+                      playSound('achievement');
+                    }
+                  }
+                }}
+                onClaimReward={(questId) => {
+                  setQuests(prevQuests => {
+                    return prevQuests.map(quest => {
+                      if (quest.id === questId && quest.completed && !quest.rewardClaimed) {
+                        quest.rewards.forEach(reward => {
+                          if (reward.type === 'coins') {
+                            setScore(prev => prev + reward.amount);
+                            setTotalEarned(prev => prev + reward.amount);
+                          } else if (reward.type === 'research') {
+                            setResearchPoints(prev => prev + reward.amount);
+                          } else if (reward.type === 'talent') {
+                            setTalentPoints(prev => prev + reward.amount);
+                          }
+                        });
+                        
+                        if (soundEnabled) {
+                          playSound('achievement');
+                        }
+                        
+                        return { ...quest, rewardClaimed: true };
+                      }
+                      return quest;
+                    });
+                  });
+                }}
+                quests={quests}
+                setQuests={setQuests}
+                darkMode={darkMode}
+                soundEnabled={soundEnabled}
+                totalClicks={totalClicks}
+                score={score}
+                passiveIncome={passiveIncome}
+                upgrades={upgrades}
+                onClose={() => setShowQuests(false)}
+              />
+            </div>
+          )}
+          {showTalents && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <TalentSystem
+                darkMode={darkMode}
+                talentPoints={talentPoints}
+                onSpendPoints={(amount) => setTalentPoints(prev => prev - amount)}
+                onTalentUpdate={(talents) => {
+                  const newBonuses = { ...initialBonuses };
 
-              <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
-                {pets.map(pet => (
-                  <div
-                    key={pet.id}
-                    className={`${darkMode ? 'bg-purple-800' : 'bg-purple-100'} p-4 rounded-lg flex items-center gap-4`}
-                  >
-                    <div className={`p-3 rounded-lg ${darkMode ? 'bg-purple-700' : 'bg-purple-200'}`}>
-                      {pet.icon}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-bold">{pet.name}</h3>
-                      <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
-                        {pet.ability}
-                      </p>
-                      <div className="text-sm">
-                         Бонус: {pet.bonusType === 'criticalChance' ? `+${(pet.bonus * 100).toFixed(0)}% к шансу` :
-                                 pet.bonusType === 'criticalMultiplier' ? `+${pet.bonus.toFixed(1)}x к множителю` :
-                                 pet.bonusType === 'autoClickSpeed' ? `+${pet.bonus} к скорости автокликера` :
-                                 pet.bonusType === 'prestigePoints' ? `+${(pet.bonus * 100).toFixed(0)}% к престижу` :
-                                 `+${(pet.bonus * 100).toFixed(0)}% к ${pet.bonusType === 'click' ? 'клику' : 'пассивному доходу'}`}
-                      </div>
-                      <div className="text-sm">Уровень: {pet.level}</div>
-                    </div>
-                    <div>
-                      {pet.owned ? (
-                         <button
-                          onClick={() => setActivePet(pet)}
-                          className={`px-3 py-1 rounded-full text-sm ${
-                            activePet?.id === pet.id
-                              ? (darkMode ? 'bg-green-600 text-white' : 'bg-green-500 text-white')
-                              : (darkMode ? 'bg-purple-700 text-purple-200 hover:bg-purple-600' : 'bg-purple-200 text-purple-800 hover:bg-purple-300')
-                          } transition-colors`}
-                          disabled={activePet?.id === pet.id}
-                        >
-                          {activePet?.id === pet.id ? 'Активен' : 'Выбрать'}
-                        </button>
-                      ) : (
-                         <button
-                           onClick={() => purchasePet(pet.id)}
-                           disabled={score < pet.cost}
-                           className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 ${
-                             score >= pet.cost
-                               ? (darkMode ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-yellow-400 hover:bg-yellow-500 text-white')
-                               : (darkMode ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
-                           } transition-colors`}
-                         >
-                           <Coins className="w-4 h-4" /> {pet.cost}
-                         </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  for (const [talentId, level] of Object.entries(talents)) {
+                    const talent = gameTalents.find((t: { id: string }) => t.id === talentId);
+                    if (talent && 'effects' in talent) {
+                      for (const effect of talent.effects as TalentEffect[]) {
+                        if (effect.type in newBonuses) {
+                          newBonuses[effect.type] += effect.value * Number(level);
+                        }
+                      }
+                    }
+                  }
+
+                  setTalentBonuses(newBonuses);
+                }}
+                onClose={() => setShowTalents(false)}
+              />
             </div>
-          </div>
-        )}
+          )}
+          {showResearch && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <ResearchSystem
+                darkMode={darkMode}
+                researchPoints={researchPoints}
+                onClose={() => setShowResearch(false)}
+              />
+            </div>
+          )}
+        </div>
       </div>
       
       {/* по рофлу */}
